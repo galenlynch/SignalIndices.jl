@@ -1,0 +1,7 @@
+name = "SignalIndices"
+uuid = "18f53e89-494d-4131-905c-653e8ada6cd8"
+authors = ["Galen Lynch <galen@galenlynch.com>"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.10"
