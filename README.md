@@ -44,7 +44,7 @@ maxima_indices = local_extrema(signal, >)
 minima_indices = local_extrema(signal, <)
 
 # Fast histogram for regularly-spaced bins
-counts = glhist(values, bin_edges)
+counts = uniformhist(values, bin_edges)
 ```
 
 ### Array Utilities
@@ -58,6 +58,12 @@ diffs = map_pairwise(-, sorted_times)  # Pairwise differences
 idx = find_closest(array, target)
 non_colliding = filter_no_collisions(events_a, events_b, min_gap)
 duplicates = find_not_unique(array)
+
+# Equality and comparison
+allsame([1, 1, 1])            # true — all elements equal
+allsame(length, [1,2], [3,4]) # true — all have same length
+anyeq(3, [1, 2, 3])           # true — element found in collection
+absdiff(5, 3)                 # 2 — absolute difference (unsigned-safe)
 
 # Iterator utilities
 result = sum(skipnothing([1, nothing, 2, nothing, 3]))  # 6
@@ -119,7 +125,7 @@ Pkg.develop(path="/path/to/SignalIndices")
 - `indices_above_thresh(arr, threshold)` - Contiguous regions above threshold
 - `local_extrema(signal, comp)` - Find local maxima/minima
 - `find_local_extrema(signal, start; findmax, right_on_ties)` - Hill-climb to extremum
-- `glhist(values, bins)` / `glhist!(counts, values, bins)` - Fast histogram
+- `uniformhist(values, bins)` / `uniformhist!(counts, values, bins)` - Fast histogram
 - `filter_no_collisions(as, bs, radius)` - Remove elements too close to reference
 - `window_counts(times, duration)` - Count events in sliding window
 
@@ -138,6 +144,9 @@ Pkg.develop(path="/path/to/SignalIndices")
 - `trailing_zeros_idx(arr)` - Last non-zero index
 - `clipsize!(vec, n)` - Resize and shrink capacity
 - `rev_view(vec)` - Reversed view
+- `allsame(collection)` / `allsame(f, args...)` - Check all elements (or mapped values) are equal
+- `anyeq(element, collection)` - Check if element exists in collection
+- `absdiff(a, b)` - Absolute difference (safe for unsigned integers)
 - `skipoftype(T, itr)` / `skipnothing(itr)` - Skip elements by type
 
 ## Citing
