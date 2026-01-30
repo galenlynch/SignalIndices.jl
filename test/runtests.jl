@@ -109,9 +109,9 @@ using Test
         @test find_closest([1.0, 2.0, 3.0], 0.5) == 1
     end
 
-    @testset "glhist" begin
-        @test glhist([0.5, 1.5, 2.5], 0:1:4) == [1, 1, 1, 0]
-        @test glhist([0.5, 0.6, 2.5], 0:1:3) == [2, 0, 1]
+    @testset "uniformhist" begin
+        @test uniformhist([0.5, 1.5, 2.5], 0:1:4) == [1, 1, 1, 0]
+        @test uniformhist([0.5, 0.6, 2.5], 0:1:3) == [2, 0, 1]
     end
 
     @testset "edge_triggers" begin
