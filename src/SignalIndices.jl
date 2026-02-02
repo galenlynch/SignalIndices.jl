@@ -79,6 +79,14 @@ export
     anyeq,
     absdiff
 
+"""
+    div_type(::Type{N})
+    div_type(::Type{N}, ::Type{D})
+    div_type(num, den)
+
+Return the result type of dividing values of the given numeric or array type(s).
+Float types are preserved; integer types promote to `Float64`.
+"""
 div_type(::Type{N}) where {N<:AbstractFloat} = N
 div_type(::Type{N}) where {N<:Integer} = Float64
 div_type(::Type{A}) where {T<:AbstractFloat,N,A<:AbstractArray{T,N}} = Array{T,N}
@@ -94,9 +102,12 @@ div_type(num::N) where {N<:Number} = div_type(N)
 # =============================================================================
 
 """
-    ndx_to_t(i, fs, start_t)
+    ndx_to_t(i, fs, start_t=0)
 
-Converts an index to its time in a regularly sampled time series.
+Convert a 1-based index (or array of indices) to its time in a regularly sampled
+time series with sample rate `fs` and optional `start_t`.
+
+See also [`t_to_ndx`](@ref), [`t_to_last_ndx`](@ref), [`t_sup_to_ndx`](@ref).
 """
 function ndx_to_t end
 function ndx_to_t(i::AbstractUnitRange, fs::R, start_t::R = zero(fs)) where {R<:Real}
@@ -134,14 +145,18 @@ end
 
 
 """
-    t_to_ndx()
+    t_to_ndx(x, fs, start_t=0, T=Int)
 
-Converts a time in a regularly sampled time series to its index. Returns the
-index of the first sample at or after the time specified
+Convert a time to its 1-based index in a regularly sampled time series. Returns
+the index of the first sample at or after the specified time.
 
+See also [`ndx_to_t`](@ref), [`t_to_last_ndx`](@ref), [`t_sup_to_ndx`](@ref).
 """
 function t_to_ndx end
-function t_to_ndx(x::Real, fs::Real, start_t::Real = zero(fs), T::DataType = Int)
+function t_to_ndx(x::AbstractFloat, fs::Real, start_t::Real = zero(fs), T::DataType = Int)
+    ceil(T, (x - start_t) * fs - sqrt(eps(typeof(x)))) + one(T)
+end
+function t_to_ndx(x::Integer, fs::Real, start_t::Real = zero(fs), T::DataType = Int)
     ceil(T, (x - start_t) * fs) + one(T)
 end
 function t_to_ndx!(dest::AbstractArray, A::AbstractArray, args...)
@@ -152,7 +167,14 @@ function t_to_ndx(a::AbstractArray, fs, start_t = zero(fs), T::DataType = Int)
     t_to_ndx!(dest, a, fs, start_t)
 end
 
-"Like t_to_ndx, but returns sample at or before time"
+"""
+    t_to_last_ndx(x, fs, start_t=0, T=Int)
+
+Like [`t_to_ndx`](@ref), but returns the index of the last sample at or before
+the specified time.
+
+See also [`ndx_to_t`](@ref), [`t_sup_to_ndx`](@ref).
+"""
 function t_to_last_ndx(x::Real, fs::Real, start_t::Real = zero(fs), T::DataType = Int)
     floor(T, (x - start_t) * fs) + one(T)
 end
@@ -165,22 +187,37 @@ function t_to_last_ndx(a::AbstractArray, fs, start_t = zero(fs), T::DataType = I
 end
 
 """
-    t_sup_to_ndx()
+    t_sup_to_ndx(x, fs, start_t=0, T=Int)
 
-Converts a time in a regularly sampled time series to the index of the last
-sample before the specified time.
+Convert a time to the index of the last sample strictly before the specified time
+in a regularly sampled time series. Equivalent to `t_to_ndx(...) - 1`.
+
+See also [`t_to_ndx`](@ref), [`t_to_last_ndx`](@ref), [`ndx_to_t`](@ref).
 """
-function t_sup_to_ndx(args...)
-    ndx = t_to_ndx(args...)
-    ndx - one(ndx)
+function t_sup_to_ndx(x::Real, fs::Real, start_t::Real = zero(fs), T::DataType = Int)
+    t_to_ndx(x, fs, start_t, T) - one(T)
+end
+function t_sup_to_ndx(a::AbstractArray, fs, start_t = zero(fs), T::DataType = Int)
+    t_to_ndx(a, fs, start_t, T) .- one(T)
 end
 
-"Clips an index to be within the valid range for an array of length l"
+"""
+    clip_ndx(ndx, l)
+
+Clamp index `ndx` to the valid range `1:l` for an array of length `l`.
+
+See also [`clip_ndx_deviance`](@ref).
+"""
 function clip_ndx end
 @inline clip_ndx(ndx::T, l::T) where {T<:Integer} = clamp(ndx, one(T), l)
 @inline clip_ndx(ndx::Integer, l::Integer) = clip_ndx(promote(ndx, l)...)
 
-"clip_ndx but also return deviance"
+"""
+    clip_ndx_deviance(ndx, l)
+
+Like [`clip_ndx`](@ref), but also returns the deviance (clipped - original) as a
+second value.
+"""
 function clip_ndx_deviance(ndx, l)
     ndxout = clip_ndx(ndx, l)
     return ndxout, ndxout - ndx
@@ -193,6 +230,12 @@ Find the number of indices between `start_idx` and `stop_idx`.
 """
 n_ndx(start_idx::T, stop_idx::T) where {T<:Integer} = stop_idx - start_idx + one(T)
 
+"""
+    expand_selection(ib, ie, imax, expansion)
+
+Expand the index range `[ib, ie]` by `expansion` in both directions, clamping to
+`[1, imax]`. Returns a tuple `(ib_expanded, ie_expanded)`.
+"""
 function expand_selection(ib::T, ie::T, imax::T, expansion::T) where {T<:Integer}
     ib_exp = max(one(T), ib - expansion)
     ie_exp = min(ie + expansion, imax)
@@ -216,9 +259,21 @@ function ndx_offset(start_ndx::T, npt::T) where {T<:Integer}
     return start_ndx + npt + adjust
 end
 
+"""
+    duration(npoints, fs)
+
+Return the duration of a regularly sampled time series with `npoints` samples at
+sample rate `fs`. Assumes 1-based indexing, so duration is `(npoints - 1) / fs`.
+"""
 duration(npoints::Integer, fs::Real) = (npoints - 1) / fs
 
-"Find the time_interval of a regularly sampled time series"
+"""
+    time_interval(npoints, fs, start_t=0)
+    time_interval(a::AbstractVector, fs, start_t=0)
+
+Return the `(start_t, end_t)` time interval of a regularly sampled time series
+with `npoints` samples (or a vector `a`) at sample rate `fs`.
+"""
 function time_interval end
 function time_interval(npoints::Integer, fs::T, start_t::T) where {T<:AbstractFloat}
     return (start_t, start_t + duration(npoints, fs))
@@ -228,7 +283,16 @@ function time_interval(n::Integer, fs::Real, start_t::Real = zero(fs))
 end
 time_interval(a::AbstractVector, args...) = time_interval(length(a), args...)
 
-"Find the indices to select all points in a bin"
+"""
+    bin_bounds(binno, binsize)
+    bin_bounds(binno, binsize, max_ndx)
+
+Return the `(start_idx, stop_idx)` 1-based index bounds for bin number `binno`
+with `binsize` elements per bin. The three-argument form clamps the result to
+`max_ndx`.
+
+See also [`bin_center`](@ref).
+"""
 function bin_bounds end
 # Intended to work with binno as an integer or ranges
 # though I can't figure out how to express that
@@ -247,7 +311,15 @@ function bin_bounds(binno::Real, binsize::Real, max_ndx::Real)
     return clipped_bounds
 end
 
-"Find the center index of a bin"
+"""
+    bin_center(idxs::NTuple{2})
+    bin_center(binno, binsize, ...)
+
+Return the center index of a bin, either from a `(start, stop)` tuple or by
+computing [`bin_bounds`](@ref) first.
+
+See also [`bin_bounds`](@ref).
+"""
 function bin_center end
 bin_center(idxs::NTuple{2,<:Real}) = mean(idxs)
 bin_center(i::Real, args...) = bin_center(bin_bounds(i, args...))
@@ -268,6 +340,13 @@ function bin_center(a::AbstractArray{<:NTuple{2,<:Integer}})
     bin_center!(dest, a)
 end
 
+"""
+    view_trailing_slice(a::AbstractArray{<:Any,N}, idx)
+
+Return a `view` of `a` sliced along its last dimension at `idx`, with all
+leading dimensions selected via `:`. For a 3D array, this is equivalent to
+`view(a, :, :, idx)`.
+"""
 @generated function view_trailing_slice(
     a::AbstractArray{<:Any,N},
     idx::T,
@@ -284,6 +363,12 @@ function view_trailing_slice_impl(a::Type{<:AbstractArray{<:Any,N}}) where {N}
     Expr(:call, exprargs...)
 end
 
+"""
+    make_slice_idx(ndims, dimno, idx)
+
+Construct a tuple of indices that selects `idx` along dimension `dimno` and `:` along
+all other dimensions. Useful for programmatic slicing of N-dimensional arrays.
+"""
 function make_slice_idx(
     ndims::Integer,
     dimno::Integer,
@@ -295,6 +380,13 @@ function make_slice_idx(
     return (idxes...,)
 end
 
+"""
+    make_expand_idx(ndims, dimno)
+
+Construct an index tuple that selects `:` along dimension `dimno` and `1` along
+all other dimensions. Useful for broadcasting a vector along one dimension of an
+N-dimensional array.
+"""
 function make_expand_idx(ndims::Integer, dimno::Integer)
     idxes = Array{Union{Colon,Int}}(undef, ndims)
     idxes[:] .= 1
@@ -302,9 +394,23 @@ function make_expand_idx(ndims::Integer, dimno::Integer)
     return (idxes...,)
 end
 
-"copy_length_check returns true if dest can accept all data from source"
+"""
+    copy_length_check(n_dest, n_source, d_off=1, s_off=1, n=n_ndx(s_off, n_source))
+    copy_length_check(dest::AbstractArray, source::AbstractArray, ...)
+    copy_length_check(dest::AbstractArray, d_off, source::AbstractArray, s_off, ...)
+
+Return `true` if `dest` has enough room to accept `n` elements copied from
+`source` at the given offsets. The three-argument array form interleaves each
+offset with its array: `(dest, d_off, source, s_off, ...)`.
+"""
 function copy_length_check end
 
+"""
+    copy_length_dest_check(n_dest, d_off, n)
+
+Return `true` if a destination of length `n_dest` can accept `n` elements
+starting at offset `d_off`.
+"""
 function copy_length_dest_check(n_dest::Integer, d_off::Integer, n::Integer)
     n_dest >= d_off && n_ndx(d_off, n_dest) >= n
 end
@@ -333,10 +439,29 @@ function copy_length_check(
     copy_length_check(dest, source, d_off, s_off, args...)
 end
 
+"""
+    ndx_wrap(i, max_ndx)
+
+Wrap a 1-based index `i` into the range `1:max_ndx` using modular arithmetic.
+
+# Examples
+```jldoctest
+julia> SignalIndices.ndx_wrap(5, 3)
+2
+
+julia> SignalIndices.ndx_wrap(3, 3)
+3
+```
+"""
 function ndx_wrap(i::T, max_ndx::Integer) where {T<:Integer}
     mod(i - one(T), T(max_ndx)) + one(T)
 end
 
+"""
+    invert_perm(p)
+
+Return the inverse of permutation vector `p`, such that `invert_perm(p)[p[i]] == i`.
+"""
 function invert_perm(p)
     ip = similar(p)
     for i = 1:length(p)
@@ -349,6 +474,15 @@ end
 # Signal processing and array utilities
 # =============================================================================
 
+"""
+    weighted_mean_dim(summand, weights, dim=N, total_weight=sum(weights))
+
+Compute the weighted mean of `summand` along dimension `dim` using `weights`
+(a vector whose length matches `size(summand, dim)`). Returns an array with
+dimension `dim` reduced to size 1.
+
+See also [`weighted_mean`](@ref).
+"""
 function weighted_mean_dim(
     summand::AbstractArray{E,N},
     weights::AbstractVector{T},
@@ -360,16 +494,24 @@ function weighted_mean_dim(
     dims = collect(size(summand))
     dims[dim] = 1
 
-    slice_idx = collect(make_slice_idx(N, dim, 1))
-    reduced = zeros(F, (dims...,))
+    outdims = (dims...,)
+    reduced = zeros(F, outdims)
     for i = 1:size(summand, dim)
-        slice_idx[dim] = i
-        reduced .+= summand[slice_idx...] .* weights[i]
+        slice = selectdim(summand, dim, i)
+        reduced .+= reshape(slice, outdims) .* weights[i]
     end
     reduced .= reduced ./ total_weight
     return reduced
 end
 
+"""
+    weighted_mean(summand, weights, total_weight=sum(weights))
+
+Compute the weighted mean of `summand` using element-wise `weights`. Both arrays
+must have the same size. Returns a scalar.
+
+See also [`weighted_mean_dim`](@ref).
+"""
 function weighted_mean(
     summand::AbstractArray{E,N},
     weights::AbstractArray{T,N},
@@ -406,6 +548,16 @@ function weighted_mean(
     return reduced / total_weight
 end
 
+"""
+    local_extrema(s, comp = >)
+
+Return indices of local extrema in vector `s`. An index `i` is a local extremum
+when `comp(s[i], s[i+1])` is true and `comp(s[i-1], s[i])` is false (i.e., a
+direction change). Use `>` for maxima (default), `<` for minima.
+
+Note: plateau-to-descent transitions are reported as extrema. For example,
+`local_extrema([1, 2, 2, 1])` returns `[3]` because `2 > 1` but `!(2 > 2)`.
+"""
 function local_extrema(s::AbstractVector, comp::Function = >)
     ns = length(s)
     idxes = Vector{Int}(undef, div(ns, 2))
@@ -425,6 +577,11 @@ function local_extrema(s::AbstractVector, comp::Function = >)
     idxes
 end
 
+"""
+    rev_view(a::AbstractVector)
+
+Return a reversed view of vector `a` without copying.
+"""
 rev_view(a::AbstractVector) = @view a[end:-1:1]
 
 """
@@ -459,7 +616,13 @@ end
 _pairwise_idx(i, j, n) = i - j + div((j - 1) * (2 * (n - 1) - (j - 2)), 2)
 
 """
-n_el is the number of elements in the INPUT to pairwise diff
+    pairwise_idx(i, j, n)
+
+Return the linear index into the output of [`pairwise_idxs`](@ref) for the pair
+`(i, j)` where `n` is the number of input elements. Throws `ArgumentError` if
+`i == j`.
+
+See also [`pairwise_idxs`](@ref), [`map_pairwise`](@ref).
 """
 function pairwise_idx(i::T, j::T, n) where {T}
     i == j && throw(ArgumentError("invalid indices"))
@@ -467,6 +630,17 @@ function pairwise_idx(i::T, j::T, n) where {T}
     _pairwise_idx(upper, lower, n)
 end
 
+"""
+    map_pairwise(f, a, R=eltype(a))
+    map_pairwise(f, as, bs, R=eltype(as))
+
+Apply `f` to all unique pairs from vector `a` (single-argument form) or to the
+Cartesian product of `as` and `bs` (two-argument form). The single-argument form
+returns a vector ordered consistently with [`pairwise_idxs`](@ref); the
+two-argument form returns a matrix.
+
+See also [`pairwise_idxs`](@ref), [`pairwise_idx`](@ref).
+"""
 function map_pairwise(f::F, a::AbstractVector{T}, ::Type{R} = T) where {F,T,R}
     n = length(a)
     out = Vector{R}(undef, convert(Int, n * (n - 1) / 2))
@@ -497,8 +671,20 @@ function map_pairwise(
     out
 end
 
+"""
+    imap_product(f, as, bs)
+
+Return a lazy iterator that applies `f(a, b)` to every element of the Cartesian
+product of `as` and `bs`.
+"""
 imap_product(f, as, bs) = imap(x -> @inbounds(f(x[1], x[2])), Iterators.product(as, bs))
 
+"""
+    find_subseq(subseq, seq)
+
+Return a vector of starting indices where `subseq` occurs in `seq`. Uses
+`isequal` for element comparison.
+"""
 function find_subseq(subseq, seq)
     nsub = length(subseq)
     nsub > 0 || throw(ArgumentError("subseq cannot be empty"))
@@ -512,7 +698,7 @@ function find_subseq(subseq, seq)
     imatch = Vector{Int}(undef, max_idx)
     nmatch = 0
     idx = 1
-    while !isnothing(idx = findnext(p, seq, idx))
+    while (idx = findnext(p, seq, idx)) !== nothing
         idx > max_idx && break
         ismatch = true
         @inbounds for i = 2:nsub
@@ -531,6 +717,13 @@ function find_subseq(subseq, seq)
     imatch
 end
 
+"""
+    subselect(base_vec, idx_tup_vec, outtype=...)
+
+Extract sub-vectors from `base_vec` using a vector of `(start, stop)` index
+tuples. Returns a `Vector{outtype}` where each element is the slice
+`base_vec[start:stop]`.
+"""
 function subselect(
     base_vec,
     idx_tup_vec::AbstractVector{<:NTuple{2}},
@@ -563,6 +756,12 @@ function subselect(
     out
 end
 
+"""
+    simple_summary_stats(a)
+
+Return `(mean, std, sem)` for array `a`, where `sem` is the standard error of
+the mean.
+"""
 function simple_summary_stats(a::AbstractArray)
     m = mean(a)
     s = std(a)
@@ -738,6 +937,14 @@ _union_poptype(::Type{T}, ::Type{T}) where {T} = Union{}
 # Necessary for cases like _union_poptype(Union{A,B}, Union{A,C})
 union_poptype(::Type{T}, ::Type{S}) where {T,S} = _union_poptype(T, Union{T,S})
 
+"""
+    skipnothing(itr)
+
+Return an iterator that skips `nothing` values in `itr`. Equivalent to
+`skipoftype(Nothing, itr)`.
+
+See also [`skipoftype`](@ref).
+"""
 skipnothing(itr) = skipoftype(Nothing, itr)
 
 # Does not check input lengths
@@ -762,11 +969,12 @@ end
 
 Sum `s` in a sliding window of `nav` points, placing the result into `out`.
 The length of `out` should be `max(length(s) - nav + 1, 0)` if `nav > 0`, or
-`length(s)` otherwise.
+`length(s)` otherwise. When `nav` is 0 or 1 the result is a copy of `s`.
 
 Does not zero-pad.
 """
 function moving_sum!(out, s, nav)
+    nav < 0 && throw(ArgumentError("nav must be non-negative, got $nav"))
     nin = length(s)
     nout = length(out)
     if nout != ifelse(nav == 0, nin, max(nin - nav + 1, min(nin, 1)))
@@ -778,9 +986,11 @@ end
 """
     moving_sum(s, nav)
 
-Same as [`moving_sum!`](@ref), but returns a new array.
+Same as [`moving_sum!`](@ref), but returns a new array. When `nav` is 0 or 1 the
+result is a copy of `s`.
 """
 function moving_sum(s::AbstractVector, nav::Integer)
+    nav < 0 && throw(ArgumentError("nav must be non-negative, got $nav"))
     nin = length(s)
     nout = ifelse(nav == 0, nin, max(nin - nav + 1, min(nin, 1)))
     _moving_sum!(similar(s, nout), s, min(nav, nin), nout)
@@ -800,6 +1010,13 @@ function trailing_zeros_idx(arr)
     last_idx
 end
 
+"""
+    thresh_cross(arr, thresh, comp = <)
+
+Return indices where `arr` crosses upward through `thresh` according to `comp`.
+An index `i+1` is returned when `comp(arr[i], thresh)` is true and
+`comp(arr[i+1], thresh)` is false (i.e., the signal leaves the `comp` region).
+"""
 function thresh_cross(arr, thresh, comp = <)
     l = length(arr)
     idx_cross = Vector{Int}(undef, div(l, 2))
@@ -814,8 +1031,20 @@ function thresh_cross(arr, thresh, comp = <)
     idx_cross
 end
 
+"""
+    centered_basis(n_point)
+
+Return a range of `n_point` values centered around zero (e.g., `[-1.0, 0.0, 1.0]`
+for `n_point=3`).
+"""
 centered_basis(n_point) = (0:(n_point-1)) .- (n_point - 1) / 2
 
+"""
+    stepsize(r)
+
+Return the step size of a range or regularly sampled vector. For a `UnitRange`,
+returns `1`. For a generic vector, returns `a[2] - a[1]` (assumes regular spacing).
+"""
 stepsize(r::StepRangeLen) = Float64(r.step)
 stepsize(::UnitRange) = 1
 stepsize(a::AbstractVector) = a[2] - a[1]
@@ -865,7 +1094,7 @@ julia> cnts = zeros(Int, 3);
 
 julia> uniformhist!(cnts, [0.1, 0.5, 1.2, 2.9], 0.0:1.0:3.0)
 3-element Vector{Int64}:
- 1
+ 2
  1
  1
 ```
@@ -891,7 +1120,7 @@ See also [`uniformhist!`](@ref).
 ```jldoctest
 julia> uniformhist([0.1, 0.5, 1.2, 2.9], 0.0:1.0:3.0)
 3-element Vector{Int64}:
- 1
+ 2
  1
  1
 
@@ -905,6 +1134,13 @@ julia> uniformhist(Float64, [1, 1, 2, 3, 3, 3], 1:4)
 uniformhist(::Type{T}, xs, r) where {T} = _uniformhist!(zeros(T, length(r) - 1), xs, r)
 uniformhist(xs, r) = uniformhist(Int, xs, r)
 
+"""
+    find_local_extrema(sig, start_ndx=div(length(sig), 2); findmax=true, right_on_ties=true)
+
+Starting from `start_ndx`, hill-climb through `sig` to find a local maximum
+(or minimum if `findmax=false`). When tied, moves right if `right_on_ties=true`.
+Skips `missing` and `NaN` values. Returns the index of the found extremum.
+"""
 function find_local_extrema(
     sig::AbstractVector,
     start_ndx::Integer = div(length(sig), 2);
@@ -919,6 +1155,7 @@ function find_local_extrema(
     if ismissing(sig[start_ndx]) || isnan(sig[start_ndx])
         newstart = findfirst(x -> !(ismissing(x) | isnan(x)), sig)
         isnothing(newstart) && error("None valid")
+        start_ndx = newstart
     end
     search_ndx = start_ndx
     iterno = 0
@@ -1014,15 +1251,17 @@ function filtermap(p::Function, f::Function, xs::AbstractVector)
     if isempty(xs)
         return similar(xs, Base.promote_op(f, eltype(xs)))
     end
+    # Find the first element passing the predicate to determine output type
+    first_pass = findfirst(p, xs)
+    if isnothing(first_pass)
+        return similar(xs, Base.promote_op(f, eltype(xs)), 0)
+    end
     @inbounds begin
-        m_el1 = f(xs[1])
+        m_el1 = f(xs[first_pass])
         out = similar(xs, typeof(m_el1))
-        nout = 0
-        if p(xs[1])
-            nout = 1
-            out[1] = m_el1
-        end
-        for elno = 2:length(xs)
+        nout = 1
+        out[1] = m_el1
+        for elno = (first_pass + 1):length(xs)
             if p(xs[elno])
                 nout += 1
                 out[nout] = f(xs[elno])
@@ -1066,8 +1305,22 @@ function find_not_unique(a::AbstractArray{T}) where {T}
     redundant_ndxs
 end
 
+"""
+    clipsize!(a::AbstractVector, n)
+
+Resize vector `a` to length `n` and release excess memory via `sizehint!`.
+"""
 clipsize!(a::AbstractVector, n::Integer) = sizehint!(resize!(a, n), n)
 
+"""
+    find_all_edge_triggers(arr, thr, comp = >=)
+
+Return all indices where `arr` triggers an edge crossing of threshold `thr`.
+An edge occurs at index `i` when `comp(arr[i], thr)` is true and
+`comp(arr[i-1], thr)` is false.
+
+See also [`find_first_edge_trigger`](@ref).
+"""
 function find_all_edge_triggers(arr, thr, comp = >=)
     indices = Int[]
     @inbounds for i = 2:length(arr)
@@ -1078,6 +1331,14 @@ function find_all_edge_triggers(arr, thr, comp = >=)
     indices
 end
 
+"""
+    find_first_edge_trigger(arr, thr, comp = >=)
+
+Return the index of the first edge trigger in `arr` crossing `thr`, or `nothing`
+if none is found.
+
+See also [`find_all_edge_triggers`](@ref).
+"""
 function find_first_edge_trigger(arr, thr, comp = >=)
     @inbounds for i = 2:length(arr)
         if comp(arr[i], thr) & !comp(arr[i-1], thr)
@@ -1087,6 +1348,12 @@ function find_first_edge_trigger(arr, thr, comp = >=)
     nothing
 end
 
+"""
+    indices_above_thresh(arr, thr)
+
+Return a vector of `UnitRange{Int}` spans where `arr[i] >= thr`. Consecutive
+above-threshold indices are merged into a single range.
+"""
 function indices_above_thresh(arr, thr)
     out = Vector{UnitRange{Int}}()
     curr_start = nothing
@@ -1111,6 +1378,14 @@ function indices_above_thresh(arr, thr)
     return out
 end
 
+"""
+    allsame(a::AbstractArray)
+    allsame(first, second, others...)
+    allsame(f::Function, first, second, others...)
+
+Return `true` if all arguments (or elements of `a`) are equal. The `f` form
+compares `f(x)` values.
+"""
 allsame(f::Function, first) = true
 
 function allsame(f::Function, first, second, others...)
@@ -1122,7 +1397,7 @@ allsame(first, args...) = allsame(identity, first, args...)
 function allsame(a::AbstractArray)
     isempty(a) && return true
     @inbounds first = a[1]
-    for e in a[2:end]
+    for e in @view a[2:end]
         if !isequal(e, first)
             return false
         end
@@ -1130,9 +1405,21 @@ function allsame(a::AbstractArray)
     true
 end
 
+"""
+    anyeq(el, iter)
+
+Return `true` if any element of `iter` equals `el`.
+"""
 anyeq(el, iter) = any(a -> a == el, iter)
 
+"""
+    absdiff(a, b)
+
+Return the absolute difference `|a - b|`. Uses branch-free subtraction for
+unsigned integers to avoid overflow.
+"""
 @inline absdiff(a::Unsigned, b::Unsigned) = ifelse(a <= b, b - a, a - b)
 @inline absdiff(a::Signed, b::Signed) = abs(a - b)
+@inline absdiff(a::Real, b::Real) = abs(a - b)
 
 end
